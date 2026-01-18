@@ -1,0 +1,58 @@
+name: build-push-backend
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: "471112662456"
+  IMAGE_TAG: "${{ github.sha }}"
+  ECR_REPOSITORY: "devopstia/ecommerce-backend"
+
+jobs:
+  sonarqube_scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  build_push:
+    needs: sonarqube_scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_ECR_PUSH }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login ECR
+        run: |
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin \
+              "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Build + Push Backend
+        run: |
+          IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker build -t "${IMAGE_URI}" .
+          docker push "${IMAGE_URI}"
+          
+          # Tag as latest
+          docker tag "${IMAGE_URI}" "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
+          docker push "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest"
